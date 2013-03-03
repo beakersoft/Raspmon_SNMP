@@ -1,0 +1,90 @@
+#!/usr/bin/perl
+
+use NetSNMP::OID;
+use NetSNMP::agent (':all');
+use NetSNMP::ASN (':all');
+
+my $base = ".1.3.6.1.4.1.41050";
+my $cache = ();         #cache
+my @cache_oids = ();    #keys sorted
+my $cache_updated = 0;
+
+#update the cache settings of the sensor data
+sub update_stats {
+
+        return if time() - $cache_updated < 30;         #return if the data is already up to date
+        %cache = ();
+        my $dev_id = 0;
+
+        @sensors = `cat /sys/bus/w1/devices/w1_bus_master1/w1_master_slaves`;
+        chomp(@sensors);
+
+        #loop through all the sensors we found
+        foreach $line(@sensors) {
+
+                #work out the temp we have got. Need to change this for other sensor types
+                $output = `cat /sys/bus/w1/devices/$line/w1_slave`;
+                $output =~ /t=(?<temp>\d+)/;
+                $integer_value = sprintf "%.0f",$+{temp} / 1000;
+ 		$string_value = $line;
+
+                #work out the oid
+                my $oid = "$base";
+                $oid .= ".";
+                $oid .= "$dev_id";
+
+                $cache{$oid} = $integer_value;
+
+                $dev_id ++;
+        }
+
+        @cache_oids = sort { new NetSNMP::OID($a) <=> new NetSNMP::OID($b) } (keys %cache);
+        $cache_updated = time();
+}
+
+
+sub pimon_handler {
+        my ($handler, $registration_info, $request_info, $requests) = @_;
+
+        update_stats;
+for (my $request = $requests; $request; $request = $request->next()) {
+        $SNMP::use_numeric = 1;
+        my $oid = $request->getOID();
+        my $noid=SNMP::translateObj($oid);
+        if ($request_info->getMode() == MODE_GET) {
+            # For a GET request, we just check the cache
+if (exists $cache{$noid}) {
+                $request->setValue(ASN_INTEGER, $cache{$noid});
+            }
+        } elsif ($request_info->getMode() == MODE_GETNEXT) {
+            # For a GETNEXT, we need to find a best match. This is the
+            # first match strictly superior to the requested OID.
+            my $bestoid = undef;
+            foreach my $currentoid (@cache_oids) {
+                $currentoid = new NetSNMP::OID($currentoid);
+                next if $currentoid <= $oid;
+                $bestoid = $currentoid;
+                last;
+            }
+            if (defined $bestoid) {
+                $SNMP::use_numeric = 1;
+                my $noid=SNMP::translateObj($bestoid);
+                $request->setOID($bestoid);
+                $request->setValue(ASN_INTEGER, $cache{$noid});
+            }
+        }
+    }
+}
+
+my $agent = new NetSNMP::agent();
+$agent->register("pimon", "$base",
+                 \&pimon_handler);
+
+            if (exists $cache{$noid}) {
+                $request->setValue(ASN_INTEGER, $cache{$noid});
+            }
+        } elsif ($request_info->getMode() == MODE_GETNEXT) {
+            # For a GETNEXT, we need to find a best match. This is the
+            # first match strictly superior to the requested OID.
+            my $bestoid = undef;
+            foreach my $currentoid (@cache_oids) {
